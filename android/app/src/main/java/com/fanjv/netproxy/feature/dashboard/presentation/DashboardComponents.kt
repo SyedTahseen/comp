@@ -1,0 +1,243 @@
+package com.fanjv.netproxy.feature.dashboard.presentation
+
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.text.TextAutoSize
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.text
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.fanjv.netproxy.R
+import com.fanjv.netproxy.core.ui.component.AppContentCard
+import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.preference.SwitchPreference
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme
+
+private val DownloadColor = Color(0xFF2196F3)
+private val UploadColor = Color(0xFF4CAF50)
+
+/** 服务状态、实时速率与最近流量趋势。 */
+@Composable
+internal fun SpeedChartCard(
+    downloadSpeed: String,
+    uploadSpeed: String,
+    trafficSamples: List<TrafficSample>,
+    statusSummary: String,
+    isRunning: Boolean,
+    serviceControlEnabled: Boolean,
+    modifier: Modifier = Modifier,
+    onToggleService: () -> Unit = {},
+) {
+    AppContentCard(modifier = modifier.fillMaxWidth()) {
+        Column {
+            SwitchPreference(
+                title = stringResource(R.string.service_status),
+                summary = statusSummary,
+                checked = isRunning,
+                enabled = serviceControlEnabled,
+                onCheckedChange = { if (serviceControlEnabled) onToggleService() }
+            )
+            AnimatedVisibility(
+                visible = isRunning,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp)
+                            .padding(bottom = 7.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        SpeedLabel(stringResource(R.string.dashboard_download), downloadSpeed, DownloadColor, Modifier.weight(1f))
+                        SpeedLabel(stringResource(R.string.dashboard_upload), uploadSpeed, UploadColor, Modifier.weight(1f), TextAlign.End)
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(112.dp)
+                            .padding(horizontal = 16.dp)
+                            .padding(bottom = 15.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        SpeedChart(
+                            trafficSamples = trafficSamples,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SpeedLabel(label: String, value: String, color: Color, modifier: Modifier, align: TextAlign = TextAlign.Start) {
+    Text(
+        text = buildAnnotatedString {
+            withStyle(SpanStyle(color = color)) { append(label) }
+            append("  ")
+            append(value)
+        },
+        modifier = modifier,
+        style = MiuixTheme.textStyles.body2,
+        color = colorScheme.onSurfaceVariantActions,
+        textAlign = align,
+    )
+}
+
+/** 将最近一段流量采样绘制为双折线。 */
+@Composable
+private fun SpeedChart(
+    trafficSamples: List<TrafficSample>,
+    modifier: Modifier = Modifier
+) {
+    val geometry = remember(trafficSamples) { trafficChartGeometry(trafficSamples) }
+    var fromGeometry by remember { mutableStateOf(geometry) }
+    var targetGeometry by remember { mutableStateOf(geometry) }
+    val animationProgress = remember { Animatable(1f) }
+    LaunchedEffect(geometry) {
+        fromGeometry = targetGeometry
+        targetGeometry = geometry
+        animationProgress.snapTo(0f)
+        animationProgress.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(durationMillis = 700, easing = FastOutSlowInEasing)
+        )
+    }
+    val animatedGeometry = interpolateTrafficChartGeometry(
+        from = fromGeometry,
+        to = targetGeometry,
+        progress = animationProgress.value
+    )
+    val gridColor = colorScheme.onSurfaceVariantActions.copy(alpha = 0.12f)
+    Canvas(modifier = modifier) {
+        for (line in 1..3) {
+            val y = size.height * line / 4f
+            drawLine(
+                color = gridColor,
+                start = Offset(0f, y),
+                end = Offset(size.width, y),
+                strokeWidth = 1.dp.toPx()
+            )
+        }
+
+        fun drawSeries(points: List<Offset>, color: Color, alpha: Float) {
+            if (points.isEmpty()) return
+            val line = Path().apply {
+                val first = points.first()
+                moveTo(first.x * size.width, (1f - first.y) * size.height)
+                for (index in 1 until points.lastIndex) {
+                    val current = points[index]
+                    val next = points[index + 1]
+                    val midpointX = (current.x + next.x) / 2f
+                    val midpointY = (current.y + next.y) / 2f
+                    quadraticTo(
+                        current.x * size.width,
+                        (1f - current.y) * size.height,
+                        midpointX * size.width,
+                        (1f - midpointY) * size.height
+                    )
+                }
+                if (points.size > 1) {
+                    val last = points.last()
+                    lineTo(last.x * size.width, (1f - last.y) * size.height)
+                }
+            }
+            val fill = Path().apply {
+                addPath(line)
+                lineTo(points.last().x * size.width, size.height)
+                lineTo(points.first().x * size.width, size.height)
+                close()
+            }
+            drawPath(
+                path = fill,
+                brush = Brush.verticalGradient(listOf(color.copy(alpha = alpha), Color.Transparent))
+            )
+            drawPath(
+                path = line,
+                color = color,
+                style = Stroke(
+                    width = 2.dp.toPx(),
+                    cap = StrokeCap.Round,
+                    join = StrokeJoin.Round
+                )
+            )
+        }
+        drawSeries(animatedGeometry.download, DownloadColor, 0.25f)
+        drawSeries(animatedGeometry.upload, UploadColor, 0.15f)
+    }
+}
+
+/** 仪表盘中的单行摘要。 */
+@Composable
+internal fun InfoRow(title: String, content: String, compactContent: String? = null) {
+    val valueStyle = MiuixTheme.textStyles.body2
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            title,
+            modifier = Modifier.weight(1f),
+            style = MiuixTheme.textStyles.body1,
+            maxLines = if (compactContent == null) Int.MAX_VALUE else 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            compactContent ?: content,
+            modifier = Modifier.weight(if (compactContent == null) 1.4f else 2f)
+                .then(if (compactContent == null) Modifier else Modifier.clearAndSetSemantics {
+                    text = AnnotatedString(content)
+                }),
+            textAlign = TextAlign.End,
+            style = valueStyle,
+            autoSize = compactContent?.let { TextAutoSize.StepBased(minFontSize = 11.sp, maxFontSize = valueStyle.fontSize) },
+            maxLines = if (compactContent == null) Int.MAX_VALUE else 1,
+            overflow = TextOverflow.Ellipsis,
+            color = colorScheme.onSurfaceVariantActions
+        )
+    }
+}

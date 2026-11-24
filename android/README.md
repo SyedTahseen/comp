@@ -1,0 +1,106 @@
+# NetProxy Android Manager
+
+这里是 [NetProxy](../../README.md) Android 管理器的源码目录。管理器通过 Root 权限调用模块提供的 `netproxyctl` JSON 接口，负责服务、节点、订阅、分应用代理、配置和日志等交互。
+
+## 获取应用
+
+- 从 [Releases](https://github.com/Fanju6/NetProxy-Magisk/releases) 下载模块包获取管理器。
+- 每个 Release 与 CI 模块包都包含管理器 APK；刷入时可选择安装或更新，也可跳过。
+
+模块包中的 APK 由仓库 CI 从当前源码构建，使用固定密钥签名，APK 和签名材料不提交到仓库。后续使用同一密钥的构建可以直接覆盖升级。管理器不检查安装来源或签名证书，也不显示来源警告；CI 版本名仍带提交短哈希，便于定位构建。
+
+## 功能
+
+- 查看服务状态、流量、CPU、内存和当前节点
+- 导入单节点、订阅与本地配置
+- 管理订阅流量、更新周期和更新历史
+- 切换节点、自动测速和出站模式
+- 配置分应用代理与多用户应用
+- 编辑并校验 sing-box 配置
+- 查看、脱敏和导出诊断日志
+- 通过快捷设置磁贴控制服务
+
+## 运行要求
+
+- Android 8.0（API 26）或更高版本
+- `arm64-v8a` 设备
+- Magisk、KernelSU 或 APatch Root 环境
+- 已安装兼容版本的 NetProxy 模块
+
+管理器不包含代理核心，不能脱离 NetProxy 模块单独工作。
+
+## 项目结构
+
+```text
+src/android/
+├── app/                   # Android 应用
+├── gradle/                # 依赖版本与 Gradle Wrapper
+├── third_party/scripta/   # 配置编辑器源码快照
+├── ARCHITECTURE.md        # Android 分层与边界
+└── settings.gradle.kts
+```
+
+应用代码按功能域组织：
+
+```text
+app/src/main/java/com/fanjv/netproxy/
+├── core/                 # 命令契约、依赖容器、模块路径和共享 UI
+├── feature/              # dashboard、nodes、subscriptions 等功能域
+├── navigation/           # Miuix Nav 路由与主导航状态
+├── MainActivity.kt       # Android 与 Compose 入口
+└── NetProxyApplication.kt
+```
+
+主要数据流：
+
+```text
+Compose UI -> ViewModel -> Repository -> NetProxyCtlClient -> netproxyctl
+```
+
+运行状态由模块管理接口和 sing-box API 提供。Android 管理器不直接修改 Catalog 或 sing-box 运行时文件。详细边界见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+
+## 本地构建
+
+准备 Android SDK 37.2（Build Tools 37.0.0）和 JDK 25，然后从仓库根目录执行：
+
+```bash
+cd src/android
+./gradlew testDebugUnitTest lintDebug assembleDebug
+```
+
+Windows PowerShell：
+
+```powershell
+cd src/android
+.\gradlew.bat testDebugUnitTest lintDebug assembleDebug
+```
+
+调试 APK 位于 `app/build/outputs/apk/debug/`。本地 Release APK 未签名；模块包中的管理器由 CI 使用 GitHub Secrets 中的固定密钥签名。密钥库以 Base64 放入 `ANDROID_KEYSTORE_BASE64`，密码和别名分别放入 `ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_PASSWORD`、`ANDROID_KEY_ALIAS`，不得写入源码或本地构建配置后提交。
+
+## 第三方源码
+
+`third_party/scripta` 是 [Scripta](https://github.com/YuKongA/scripta) 的固定源码快照，并包含 NetProxy 配置编辑器所需的移动端工具栏与补全扩展。来源、版本和许可证见 [NETPROXY.md](third_party/scripta/NETPROXY.md)。
+
+## 参与贡献
+
+提交修改前请阅读仓库根目录的 [CONTRIBUTING.md](../../CONTRIBUTING.md)。安全问题请遵循 [SECURITY.md](../../SECURITY.md)，不要在公开 Issue 中提交订阅地址、节点凭据或完整日志。
+
+## 许可证
+
+NetProxy 使用 [GNU General Public License v3.0](../../LICENSE)。第三方组件保留各自许可证，详见 [NOTICE](../../NOTICE)。
+
+## OS4 Glass 构建
+
+本地、开发 CI 和正式发布统一使用 OS4 Glass。MIUIX 正式版发布前，Gradle 从 [MIUIX 官方仓库](https://github.com/compose-miuix-ui/miuix) 获取 `settings.gradle.kts` 锁定的源码到 `.gradle/miuix/`，首次构建需要 Git 和网络，不需要 GitHub Packages 令牌。在本目录执行：
+
+当前源码锁定为 `3526cfe2ca0779c5a2eab99af8737a96c9a8a885`（`0.9.5-beta03`），包含 Glass 顶栏模糊渐隐、标签栏淡出和模糊渲染开销的改进。版本目录中的 MIUIX 版本用于声明依赖，实际实现由统一源码替换决定，不跟随远端 main 自动更新。弹层使用官方 GlassTextField，顶栏与底部导航复用官方收起行为和系统安全区计算。应用搜索由 GlassSearchOverlay 按结果滚动渐显材质，JSON 快捷操作使用叠放在编辑器上的 GlassFloatingToolbar。代理策略组采用官方 Glass 分段栏材质和高度，保留横向滚动和按名称分配宽度；卡片保留细描边及轻量选中底色。
+
+该源码要求 Android 编译平台 `platforms;android-37.2`，本地与 CI 使用相同版本；`targetSdk=37`、`minSdk=26` 不变。
+
+```powershell
+.\gradlew.bat :app:assembleDebug
+```
+
+已有对应提交的 Git checkout 可通过 `-PnetproxyMiuixSource=C:/path/to/miuix` 复用，仍构建同一套界面。Glass 在平台支持时自动采样折射背景；其他情况下使用同一组件的静态材质，不需要另一个 APK。
+
+应用明暗跟随系统。「设置 → 外观」保留配色、界面缩放和仪表盘预览；预测性返回、平滑圆角与页面模糊不再提供独立开关。

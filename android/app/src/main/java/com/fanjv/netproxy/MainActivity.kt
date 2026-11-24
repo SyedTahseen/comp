@@ -1,0 +1,459 @@
+package com.fanjv.netproxy
+
+import android.os.Build
+import android.os.Bundle
+import android.view.WindowManager
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.DpSize
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.navigationevent.NavigationEventInfo
+import androidx.navigationevent.compose.NavigationBackHandler
+import androidx.navigationevent.compose.rememberNavigationEventState
+import com.fanjv.netproxy.core.di.netProxyViewModel
+import com.fanjv.netproxy.core.module.ModuleAccessViewModel
+import com.fanjv.netproxy.core.ui.userMessage
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import com.fanjv.netproxy.core.ui.component.AppDialogButton
+import com.fanjv.netproxy.core.ui.component.DialogActionRole
+import com.fanjv.netproxy.core.ui.component.dialogTextFieldColors
+import com.fanjv.netproxy.core.ui.component.LocalModuleAvailability
+import com.fanjv.netproxy.core.ui.component.ModulePage
+import com.fanjv.netproxy.core.ui.theme.AppThemeDefaults
+import com.fanjv.netproxy.core.ui.theme.NetProxyTheme
+import com.fanjv.netproxy.feature.about.presentation.AboutScreen
+import com.fanjv.netproxy.feature.apps.presentation.AppsScreen
+import com.fanjv.netproxy.feature.catalog.presentation.nodes.CatalogNodesViewModel
+import com.fanjv.netproxy.feature.catalog.presentation.nodes.edit.SingBoxNodeEditScreen
+import com.fanjv.netproxy.feature.proxy.presentation.PolicyGroupEditorScreen
+import com.fanjv.netproxy.feature.proxy.presentation.PolicyScreen
+import com.fanjv.netproxy.feature.proxy.presentation.PolicyViewModel
+import com.fanjv.netproxy.feature.catalog.presentation.subscriptions.SubscriptionDetailsScreen
+import com.fanjv.netproxy.feature.catalog.presentation.subscriptions.SubscriptionEditorScreen
+import com.fanjv.netproxy.feature.catalog.presentation.subscriptions.SubscriptionsScreen
+import com.fanjv.netproxy.feature.dashboard.presentation.CatalogDashboardScreen
+import com.fanjv.netproxy.feature.dashboard.presentation.CatalogDashboardViewModel
+import com.fanjv.netproxy.feature.kernel.presentation.SingBoxJsonEditScreen
+import com.fanjv.netproxy.feature.kernel.presentation.SingBoxKernelSettingsScreen
+import com.fanjv.netproxy.feature.logs.presentation.LogsScreen
+import com.fanjv.netproxy.feature.inbound.presentation.InboundSettingsScreen
+import com.fanjv.netproxy.feature.settings.presentation.NetworkMatchingScreen
+import com.fanjv.netproxy.feature.routing.presentation.RoutingRulesScreen
+import com.fanjv.netproxy.feature.settings.presentation.SettingsScreen
+import com.fanjv.netproxy.feature.theme.presentation.ThemeSettingsScreen
+import com.fanjv.netproxy.feature.theme.presentation.ThemeViewModel
+import com.fanjv.netproxy.navigation.AppDestination
+import com.fanjv.netproxy.navigation.LocalNavigator
+import com.fanjv.netproxy.navigation.MainBottomBar
+import com.fanjv.netproxy.navigation.MainPagerState
+import com.fanjv.netproxy.navigation.Route.About
+import com.fanjv.netproxy.navigation.Route.Apps
+import com.fanjv.netproxy.navigation.Route.JsonEdit
+import com.fanjv.netproxy.navigation.Route.KernelSettings
+import com.fanjv.netproxy.navigation.Route.Logs
+import com.fanjv.netproxy.navigation.Route.Main
+import com.fanjv.netproxy.navigation.Route.NodeEdit
+import com.fanjv.netproxy.navigation.Route.PolicyGroupEdit
+import com.fanjv.netproxy.navigation.Route.InboundSettings
+import com.fanjv.netproxy.navigation.Route.NetworkMatching
+import com.fanjv.netproxy.navigation.Route.RoutingRules
+import com.fanjv.netproxy.navigation.Route.SubscriptionDetails
+import com.fanjv.netproxy.navigation.Route.SubscriptionEdit
+import com.fanjv.netproxy.navigation.Route.ThemeSettings
+import com.fanjv.netproxy.navigation.rememberMainPagerState
+import com.fanjv.netproxy.navigation.rememberNavigator
+import com.fanjv.netproxy.navigation.mainDestinations
+import com.fanjv.netproxy.navigation.availableIn
+import top.yukonga.miuix.kmp.basic.NavigationItem
+import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.glass.GlassTextField as TextField
+import com.fanjv.netproxy.core.ui.component.AppDialog as OverlayDialog
+import com.fanjv.netproxy.core.ui.component.LocalManagerBackdrop
+import com.fanjv.netproxy.core.ui.component.rememberBlurBackdrop
+import top.yukonga.miuix.kmp.basic.Scaffold
+import top.yukonga.miuix.kmp.blur.layerBackdrop
+import top.yukonga.miuix.kmp.nav.core.NavDisplay
+import top.yukonga.miuix.kmp.theme.ThemeColorSpec
+import top.yukonga.miuix.kmp.theme.ThemePaletteStyle
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        setTheme(R.style.Theme_NetProxy)
+        super.onCreate(savedInstanceState)
+
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                } else {
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                }
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
+        }
+
+        setContent {
+            val themeViewModel: ThemeViewModel = netProxyViewModel()
+
+            val themeState by themeViewModel.state.collectAsStateWithLifecycle()
+            val paletteStyle = runCatching { ThemePaletteStyle.valueOf(themeState.colorStyle) }
+                .getOrDefault(AppThemeDefaults.paletteStyle)
+            val colorSpec = runCatching { ThemeColorSpec.valueOf(themeState.colorSpec) }
+                .getOrDefault(AppThemeDefaults.colorSpec)
+            val systemDensity = LocalDensity.current
+            val density = remember(systemDensity, themeState.pageScale) {
+                Density(systemDensity.density * themeState.pageScale, systemDensity.fontScale)
+            }
+            val darkMode = androidx.compose.foundation.isSystemInDarkTheme()
+
+            SideEffect {
+                WindowInsetsControllerCompat(window, window.decorView).apply {
+                    isAppearanceLightStatusBars = !darkMode
+                    isAppearanceLightNavigationBars = !darkMode
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    window.isNavigationBarContrastEnforced = false
+                }
+            }
+
+            CompositionLocalProvider(LocalDensity provides density) {
+                NetProxyTheme(
+                    miuixMonet = themeState.miuixMonet,
+                    keyColor = themeState.keyColor,
+                    paletteStyle = paletteStyle,
+                    colorSpec = colorSpec,
+                ) {
+                    NetProxyApp(themeViewModel)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun NetProxyApp(themeViewModel: ThemeViewModel) {
+    val navigator = rememberNavigator(Main)
+    val catalogNodesViewModel: CatalogNodesViewModel = netProxyViewModel()
+    val moduleAccess: ModuleAccessViewModel = netProxyViewModel()
+    val availability by moduleAccess.state.collectAsStateWithLifecycle()
+    var reconnect by rememberSaveable { mutableStateOf(false) }
+    val overlayBackdrop = rememberBlurBackdrop()
+
+    LifecycleResumeEffect(Unit) {
+        moduleAccess.refresh()
+        onPauseOrDispose { }
+    }
+
+    CompositionLocalProvider(
+        LocalNavigator provides navigator,
+        LocalModuleAvailability provides availability,
+        LocalManagerBackdrop provides overlayBackdrop,
+    ) {
+        Scaffold {
+            NavDisplay(
+                modifier = if (overlayBackdrop == null) Modifier else Modifier.layerBackdrop(overlayBackdrop),
+                backStack = navigator.backStack,
+                onBack = { navigator.pop() },
+            ) {
+                entry<Main> { MainScreen(catalogNodesViewModel, onReconnect = { reconnect = true }) }
+                entry<Apps> {
+                    ModulePage(R.string.proxy_apps, R.string.apps_read_failed, { navigator.pop() }) {
+                        AppsScreen(onBack = { navigator.pop() })
+                    }
+                }
+                entry<SubscriptionDetails> {
+                    ModulePage(R.string.subscriptions, R.string.subscriptions_read_failed, { navigator.pop() }) {
+                        SubscriptionDetailsScreen(
+                            id = it.id,
+                            onBack = { navigator.pop() }
+                        )
+                    }
+                }
+                entry<SubscriptionEdit> {
+                    ModulePage(R.string.subscriptions, R.string.subscriptions_read_failed, { navigator.pop() }) {
+                        SubscriptionEditorScreen(
+                            id = it.id,
+                            onBack = { navigator.pop() }
+                        )
+                    }
+                }
+                entry<NodeEdit> {
+                    ModulePage(R.string.node_edit, R.string.nodes_read_failed, { navigator.pop() }) {
+                        SingBoxNodeEditScreen(
+                            viewModel = catalogNodesViewModel,
+                            nodeRef = it.nodeRef,
+                            onBack = { navigator.pop() }
+                        )
+                    }
+                }
+                entry<PolicyGroupEdit> { route ->
+                    val title = if (route.tag == null) R.string.policy_add_group else R.string.policy_edit_group
+                    ModulePage(title, R.string.nodes_read_failed, { navigator.pop() }) {
+                        PolicyGroupEditorScreen(tag = route.tag, onBack = { navigator.pop() })
+                    }
+                }
+                entry<InboundSettings> {
+                    ModulePage(R.string.inbound_settings, R.string.inbound_read_failed, { navigator.pop() }) {
+                        InboundSettingsScreen(
+                            onBack = { navigator.pop() },
+                            bottomPadding = 0.dp
+                        )
+                    }
+                }
+                entry<NetworkMatching> {
+                    ModulePage(R.string.network_matching, R.string.network_read_failed, { navigator.pop() }) {
+                        NetworkMatchingScreen(onBack = { navigator.pop() })
+                    }
+                }
+                entry<RoutingRules> {
+                    ModulePage(R.string.routing_rules, R.string.routing_read_failed, { navigator.pop() }) {
+                        RoutingRulesScreen(onBack = { navigator.pop() })
+                    }
+                }
+                entry<KernelSettings> {
+                    ModulePage(R.string.kernel_settings, R.string.singbox_documents_load_failed, { navigator.pop() }) {
+                        SingBoxKernelSettingsScreen(
+                            onBack = { navigator.pop() }
+                        )
+                    }
+                }
+                entry<JsonEdit> {
+                    ModulePage(R.string.kernel_settings, R.string.singbox_documents_load_failed, { navigator.pop() }) {
+                        SingBoxJsonEditScreen(
+                            documentId = it.documentId,
+                            onBack = { navigator.pop() }
+                        )
+                    }
+                }
+                entry<ThemeSettings> { ThemeSettingsScreen(viewModel = themeViewModel) }
+                entry<About> { AboutScreen() }
+                entry<Logs> {
+                    ModulePage(R.string.logs, R.string.logs_read_failed, { navigator.pop() }) {
+                        LogsScreen(onBack = { navigator.pop() })
+                    }
+                }
+            }
+            ModuleConnectionDialog(reconnect, moduleAccess::reconnect) { reconnect = false }
+        }
+    }
+}
+
+@Composable
+private fun ModuleConnectionDialog(show: Boolean, connect: suspend (String) -> Unit, onDismiss: () -> Unit) {
+    val address = ""
+    var connecting by remember { mutableStateOf(false) }
+    var request by remember { mutableStateOf<Job?>(null) }
+    var error by remember { mutableStateOf("") }
+    val invalidAddress = stringResource(R.string.module_address_invalid)
+    val scope = rememberCoroutineScope()
+    val dismiss = { request?.cancel(); onDismiss() }
+    OverlayDialog(show = show, title = stringResource(R.string.module_reconnect),
+        onDismissRequest = dismiss, insideMargin = DpSize(0.dp, 24.dp)) {
+        Column(Modifier.padding(horizontal = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            // The Xray module is controlled through root, so there is no address to enter: just retry.
+            Text(stringResource(R.string.no_module_summary), style = top.yukonga.miuix.kmp.theme.MiuixTheme.textStyles.footnote1)
+            if (error.isNotEmpty()) Text(error, style = top.yukonga.miuix.kmp.theme.MiuixTheme.textStyles.footnote1,
+                color = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.error)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                AppDialogButton(stringResource(android.R.string.cancel), modifier = Modifier.weight(1f), onClick = dismiss)
+                AppDialogButton(stringResource(if (connecting) R.string.module_connecting else R.string.module_reconnect),
+                    modifier = Modifier.weight(1f), enabled = !connecting,
+                    role = DialogActionRole.Primary, onClick = {
+                        connecting = true
+                        error = ""
+                        request = scope.launch {
+                            try { connect(address); onDismiss() }
+                            catch (cancelled: CancellationException) { throw cancelled }
+                            catch (failure: Exception) {
+                                error = if (failure is IllegalArgumentException || failure is java.net.URISyntaxException) invalidAddress
+                                    else failure.userMessage()
+                            }
+                            finally { connecting = false; request = null }
+                        }
+                    })
+            }
+        }
+    }
+}
+
+@Composable
+internal fun MainScreen(
+    catalogNodesViewModel: CatalogNodesViewModel,
+    onReconnect: () -> Unit = {},
+) {
+    val availability = LocalModuleAvailability.current
+    val dashboard: CatalogDashboardViewModel = netProxyViewModel()
+    LaunchedEffect(dashboard, availability) { dashboard.setAvailability(availability) }
+    LifecycleResumeEffect(dashboard) {
+        dashboard.setVisible(true)
+        onPauseOrDispose { dashboard.setVisible(false) }
+    }
+    var destination by rememberSaveable { mutableStateOf(AppDestination.Dashboard) }
+    if (availability == null) {
+        CatalogDashboardScreen(onReconnect = onReconnect, viewModel = dashboard)
+        return
+    }
+    val destinations = mainDestinations(availability.available)
+    // 权限改变会改变页码；保存目的地身份，避免“设置”被映射为“节点”。
+    key(destinations) {
+        MainPager(catalogNodesViewModel, dashboard, destinations,
+            initialDestination = destination.availableIn(destinations),
+            onDestinationChanged = { destination = it }, onReconnect = onReconnect)
+    }
+}
+
+@Composable
+private fun MainPager(
+    catalogNodesViewModel: CatalogNodesViewModel,
+    dashboard: CatalogDashboardViewModel,
+    destinations: List<AppDestination>,
+    initialDestination: AppDestination,
+    onDestinationChanged: (AppDestination) -> Unit,
+    onReconnect: () -> Unit,
+) {
+    val pagerState = rememberPagerState(initialPage = destinations.indexOf(initialDestination),
+        pageCount = { destinations.size })
+    val mainPagerState = rememberMainPagerState(pagerState)
+    val policyViewModel = if (AppDestination.Nodes in destinations) {
+        val viewModel: PolicyViewModel = netProxyViewModel()
+        // Keep the confirmed selection current even when the pager disposes the proxy tab.
+        LifecycleResumeEffect(viewModel) {
+            viewModel.setVisible(true)
+            onPauseOrDispose { viewModel.setVisible(false) }
+        }
+        viewModel
+    } else null
+
+    // 非动画态（如滑动）时与 pager 同步；
+    // 导航动画结束后也重跑一次，否则点击导航可能跳过目的地页的首次按需加载。
+    LaunchedEffect(mainPagerState.pagerState.currentPage, mainPagerState.isNavigating) {
+        mainPagerState.syncPage()
+        onDestinationChanged(destinations[mainPagerState.selectedPage])
+    }
+
+    val navItems = destinations.map {
+        NavigationItem(
+            label = stringResource(it.labelRes),
+            icon = it.icon
+        )
+    }
+
+    val navigator = LocalNavigator.current
+
+    MainScreenBackHandler(
+        mainState = mainPagerState,
+        navigator = navigator,
+    )
+
+    val blurBackdrop = com.fanjv.netproxy.core.ui.component.rememberBlurBackdrop()
+
+    Scaffold(
+        bottomBar = {
+            MainBottomBar(
+                mainState = mainPagerState,
+                blurBackdrop = blurBackdrop,
+                items = navItems,
+            )
+        }
+    ) { innerPadding ->
+        val bottomPadding = innerPadding.calculateBottomPadding()
+
+        Box(modifier = Modifier) {
+            HorizontalPager(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .then(
+                        if (blurBackdrop != null) {
+                            Modifier.layerBackdrop(blurBackdrop)
+                        } else {
+                            Modifier
+                        }
+                    ),
+                state = pagerState,
+                key = { destinations[it] },
+                beyondViewportPageCount = 1,
+                userScrollEnabled = destinations.size > 1
+            ) { pageIndex ->
+                when (destinations[pageIndex]) {
+                    AppDestination.Dashboard -> CatalogDashboardScreen(
+                        bottomPadding = bottomPadding,
+                        onReconnect = onReconnect,
+                        viewModel = dashboard,
+                    )
+
+                    AppDestination.Nodes -> PolicyScreen(
+                        bottomPadding = bottomPadding,
+                        isActive = mainPagerState.selectedPage == pageIndex,
+                        viewModel = checkNotNull(policyViewModel),
+                    )
+
+                    AppDestination.Subscriptions -> SubscriptionsScreen(
+                        bottomPadding = bottomPadding,
+                        isActive = mainPagerState.selectedPage == pageIndex,
+                        nodes = catalogNodesViewModel,
+                    )
+
+                    AppDestination.Settings -> SettingsScreen(
+                        bottomPadding = bottomPadding,
+                        isActive = mainPagerState.selectedPage == pageIndex
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MainScreenBackHandler(
+    mainState: MainPagerState,
+    navigator: com.fanjv.netproxy.navigation.Navigator,
+) {
+    val isPagerBackHandlerEnabled by remember {
+        derivedStateOf {
+            navigator.backStack.lastOrNull() is Main &&
+                    navigator.backStack.size == 1 &&
+                    mainState.selectedPage != 0
+        }
+    }
+
+    val navEventState = rememberNavigationEventState(NavigationEventInfo.None)
+    NavigationBackHandler(
+        state = navEventState,
+        isBackEnabled = isPagerBackHandlerEnabled,
+        onBackCompleted = { mainState.animateToPage(0) },
+    )
+}

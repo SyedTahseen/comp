@@ -1,0 +1,143 @@
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.kotlin.parcelize)
+}
+
+// 使用仓库提交数作为管理器 versionCode，避免发布时手动维护两套编号。
+fun gitCommitCount(): Int {
+    val repositoryRoot = rootProject.rootDir.parentFile.parentFile
+    return runCatching {
+        val result = providers.exec {
+            workingDir(repositoryRoot)
+            commandLine("git", "rev-list", "--count", "HEAD")
+            isIgnoreExitValue = true
+        }
+        result.standardOutput.asText.get().trim().toIntOrNull()
+            ?.takeIf { result.result.get().exitValue == 0 && it > 0 } ?: 1
+    }.getOrDefault(1)
+}
+
+val ciManagerBuild = providers.gradleProperty("netproxyManagerCi").orNull == "true"
+val managerVersion = providers.gradleProperty("netproxyManagerVersion").orNull
+    ?: rootProject.file("../module/module.prop").takeIf { it.isFile }?.useLines { lines ->
+        lines.firstOrNull { it.startsWith("version=") }
+            ?.substringAfter('=')
+            ?.removePrefix("v")
+    }
+    ?: "8.2.0"
+val managerBuildId = providers.gradleProperty("netproxyManagerBuildId").orNull ?: "local"
+
+android {
+    namespace = "com.fanjv.netproxy"
+    compileSdk {
+        version = release(37) {
+            minorApiLevel = 2
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_25
+        targetCompatibility = JavaVersion.VERSION_25
+    }
+
+    defaultConfig {
+        applicationId = "com.fanjv.netproxy"
+        minSdk = 26
+        targetSdk = 37
+        versionCode = gitCommitCount()
+        versionName = if (ciManagerBuild) "$managerVersion-ci.$managerBuildId" else managerVersion
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
+    }
+
+    buildTypes {
+        release {
+            optimization.enable = true
+        }
+    }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
+
+    experimentalProperties["android.experimental.r8.dex-startup-optimization"] = true
+
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
+    }
+
+    androidResources {
+        generateLocaleConfig = true
+        localeFilters += listOf("en", "zh", "ru")
+    }
+
+    lint {
+        abortOnError = true
+        checkReleaseBuilds = false
+    }
+
+    packaging {
+        dex {
+            useLegacyPackaging = true
+        }
+        jniLibs {
+            useLegacyPackaging = true
+            excludes += "lib/*/libandroidx.graphics.path.so"
+        }
+        resources {
+            excludes += "META-INF/**"
+            excludes += "kotlin/**"
+            excludes += "**.bin"
+            excludes += "**/DebugProbesKt.bin"
+        }
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_25)
+    }
+}
+
+tasks.withType<Test>().configureEach {
+    // Schema 测试直接读取磁盘文件，它们不在 JVM 测试类路径中，必须显式参与缓存键。
+    inputs.file(layout.projectDirectory.file("src/main/assets/sing-box.schema.json"))
+        .withPropertyName("singBoxSchema")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.files(fileTree("src/main/res") { include("values*/strings.xml", "resources.properties") })
+        .withPropertyName("localizedStrings")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+}
+
+dependencies {
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.activity.compose)
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.compose.ui)
+    implementation(libs.androidx.compose.ui.graphics)
+    implementation(libs.androidx.compose.material.icons.extended)
+
+    // Miuix
+    implementation(libs.miuix.ui)
+    implementation(libs.miuix.icons)
+    implementation(libs.miuix.nav)
+    implementation(libs.miuix.preference)
+    implementation(libs.miuix.blur)
+    implementation(libs.miuix.squircle)
+    implementation("top.yukonga.miuix.kmp:miuix-glass-android:${libs.versions.miuix.get()}")
+    implementation("top.yukonga.miuix.kmp:miuix-glass-icons-android:${libs.versions.miuix.get()}")
+    implementation(libs.scripta.editor)
+    implementation(libs.androidx.navigationevent.compose)
+    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.okhttp)
+    testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.okhttp.mockwebserver)
+}
