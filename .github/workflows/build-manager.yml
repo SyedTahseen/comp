@@ -13,10 +13,10 @@ on:
   workflow_dispatch:
     inputs:
       build_type:
-        description: "Build type"
+        description: "Build type (release is R8-shrunk and small; debug is ~10x larger)"
         type: choice
-        options: [debug, release]
-        default: debug
+        options: [release, debug]
+        default: release
 
 concurrency:
   group: manager-${{ github.ref }}
@@ -68,10 +68,11 @@ jobs:
       - name: Decide build type
         id: kind
         run: |
-          if [[ "${GITHUB_REF}" == refs/tags/v* || "${{ inputs.build_type }}" == "release" ]]; then
-            echo "type=release" >> "$GITHUB_OUTPUT"
-          else
+          # Release is the default: only release builds are shrunk by R8 (debug APKs are ~10x larger).
+          if [[ "${{ inputs.build_type }}" == "debug" ]]; then
             echo "type=debug" >> "$GITHUB_OUTPUT"
+          else
+            echo "type=release" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build APK
@@ -94,8 +95,10 @@ jobs:
           [ -n "$APK" ] || { echo "No APK produced"; exit 1; }
           echo "path=$APK" >> "$GITHUB_OUTPUT"
 
-      # Release builds are unsigned. Add these repository secrets to sign them:
+      # Release builds are unsigned. Add these repository secrets to sign with your own key:
       #   KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD
+      # Without them a throwaway key is generated so the APK is still installable, but every run gets a
+      # different signature, so Android will refuse to update an older install (uninstall it first).
       - name: Sign release APK
         id: sign
         if: steps.kind.outputs.type == 'release'
@@ -106,20 +109,24 @@ jobs:
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           SRC="${{ steps.apk.outputs.path }}"
-          if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "::warning::No signing secrets set - uploading the unsigned release APK"
-            echo "path=$SRC" >> "$GITHUB_OUTPUT"
-            exit 0
+          KS="$RUNNER_TEMP/release.jks"
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$KS"
+          else
+            echo "::warning::No signing secrets set - signing with a throwaway CI key"
+            KEYSTORE_PASSWORD=android; KEY_ALIAS=ci; KEY_PASSWORD=android
+            keytool -genkeypair -keystore "$KS" -storepass "$KEYSTORE_PASSWORD" -keypass "$KEY_PASSWORD" \
+              -alias "$KEY_ALIAS" -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=NetProxy CI"
           fi
-          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          export KEYSTORE_PASSWORD KEY_PASSWORD
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n 1)
           OUT="app/build/outputs/NetProxyManager-${GITHUB_RUN_NUMBER}-signed.apk"
-          "$APKSIGNER" sign --ks "$RUNNER_TEMP/release.jks" \
-            --ks-pass env:KEYSTORE_PASSWORD --ks-key-alias "$KEY_ALIAS" \
+          "$APKSIGNER" sign --ks "$KS" --ks-pass env:KEYSTORE_PASSWORD --ks-key-alias "$KEY_ALIAS" \
             --key-pass env:KEY_PASSWORD --out "$OUT" "$SRC"
           "$APKSIGNER" verify "$OUT"
-          rm -f "$RUNNER_TEMP/release.jks"
+          rm -f "$KS"
           echo "path=$OUT" >> "$GITHUB_OUTPUT"
+          echo "APK size: $(du -h "$OUT" | cut -f1)"
 
       - name: Final APK path
         id: final
